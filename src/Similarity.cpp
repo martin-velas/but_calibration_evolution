@@ -10,7 +10,7 @@
 using namespace std;
 using namespace cv;
 
-void Similarity::computeEntropies()
+void Similarity2D::computeEntropies()
 {
   vector<float> histogram_X(INTENSITIES, 0);
   vector<float> histogram_Y(INTENSITIES, 0);
@@ -55,4 +55,59 @@ void Similarity::computeEntropies()
     H_XY = -p * log(p);
   }
 }
+
+float SimilarityCameraLidar::projectionError(bool verbose)
+{
+
+  cv::Rect frame(cv::Point(0, 0), img_segments.size());
+  int total_miss = 0;
+  int total = 0;
+  for (int i = 0; i < 2; i++)
+  {
+    int fire = 0;
+    int miss = 0;
+    for (::pcl::PointCloud<Velodyne::Point>::iterator pt = scan_segments[i].begin();
+        pt < scan_segments[i].end(); pt++)
+    {
+      cv::Point xy = Velodyne::Velodyne::project(*pt, P);
+
+      if (pt->z > 0 && xy.inside(frame))
+      {
+        if (img_segments.at<uchar>(xy) == i)
+        {
+          fire++;
+        }
+        else
+        {
+          miss++;
+        }
+        total++;
+      }
+    }
+    total_miss += miss;
+    if (verbose)
+    {
+      cout << "segment: " << i << ";\t ok: " << fire << ";\t missed: " << miss << endl;
+    }
+  }
+
+  return total_miss / (float)(scan_segments[0].size() + scan_segments[1].size());
+}
+
+float SimilarityCameraLidar::edgeSimilarity()
+{
+  cv::Rect frame(cv::Point(0, 0), img.size());
+  float CC = 0;
+  for (::pcl::PointCloud<Velodyne::Point>::iterator pt = scan.begin(); pt < scan.end(); pt++)
+  {
+    cv::Point xy = Velodyne::Velodyne::project(*pt, P);
+
+    if (pt->z > 0 && xy.inside(frame))
+    {
+      CC += img.at(xy) * pt->intensity;
+    }
+  }
+  return CC;
+}
+
 

@@ -105,7 +105,7 @@ public:
     if (argc == expected_arguments)
     {
       inputs.frame_rgb = cv::imread(argv[1]);
-      inputs.frame_gray = cv::imread(argv[1]);
+      inputs.frame_gray = cv::imread(argv[1], CV_LOAD_IMAGE_GRAYSCALE);
 
       inputs.error = inputs.frame_rgb.data ? "" : "image not read";
 
@@ -178,24 +178,10 @@ public:
     return Calibration6DoF(translation[INDEX::X], translation[INDEX::Y], translation[INDEX::Z], 0, 0, 0, 0);
   }
 
-  static std::vector<Velodyne::Velodyne> transform(std::vector<Velodyne::Velodyne> scans, float x, float y, float z, float rx,
-                                              float ry, float rz)
-  {
-    for (int i = 0; i < scans.size(); i++)
-    {
-      scans[i] = scans[i].transform(x, y, z, rx, ry, rz);
-    }
-    return scans;
-  }
-
   static void calibrationRefinement(Image::Image img, Velodyne::Velodyne scan, cv::Mat P, float x_rough, float y_rough,
                                     float z_rough, float max_translation, float max_rotation, unsigned steps,
                                     Calibration6DoF &best_calibration, Calibration6DoF &average)
   {
-    scan.intensityByRangeDiff();
-    scan = scan.threshold(0.05);
-
-    img = Image::Image(img.computeIDTEdgeImage());
 
     float x_min = x_rough - max_translation;
     float y_min = y_rough - max_translation;
@@ -207,15 +193,12 @@ public:
     float step_transl = max_translation * 2 / (steps - 1);
     float step_rot = max_rotation * 2 / (steps - 1);
 
-    cv::Mat img_segments = img.segmentation(2);
-    std::vector<Velodyne::Velodyne> scan_segments = scan.depthSegmentation(2);
+    SimilarityCameraLidar similarity(img, scan, P);
 
-    std::vector<Velodyne::Velodyne> transformed_segments = transform(scan_segments, x_rough, y_rough, z_rough, 0, 0, 0);
-    float rough_val = Similarity::projectionError(img_segments, transformed_segments, P, false);
-
+    float rough_val = similarity.calibrationValue(x_rough, y_rough, z_rough, 0, 0, 0);
     best_calibration.set(x_rough, y_rough, z_rough, 0, 0, 0, rough_val);
-    //cout << "rough:\t";
-    //best_calibration.print();
+    cout << "rough:\t";
+    best_calibration.print();
 
     int counter = 0;
 
@@ -242,17 +225,15 @@ public:
               float z_r = z_rot_min;
               for (size_t z_ri = 0; z_ri < steps; z_ri++)
               {
-
-                std::vector<Velodyne::Velodyne> transformed_segments = transform(scan_segments, x, y, z, x_r, y_r, z_r);
-                float value = Similarity::projectionError(img_segments, transformed_segments, P);
+                float value = similarity.calibrationValue(x, y, z, x_r, y_r, z_r);
                 Calibration6DoF calibration(x, y, z, x_r, y_r, z_r, value);
-                if (value < best_calibration.value)
+                if (value > best_calibration.value)
                 {
                   best_calibration.set(x, y, z, x_r, y_r, z_r, value);
                 }
 
-                cerr << ".";
-                if (value < rough_val)
+                //cerr << ".";
+                if (value > rough_val)
                 {
                   average += calibration;
                   counter++;

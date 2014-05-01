@@ -8,6 +8,8 @@
 #ifndef VELODYNE_H_
 #define VELODYNE_H_
 
+#include <cstdlib>
+
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
 
@@ -151,6 +153,17 @@ public:
       viewer->spinOnce(100);
       boost::this_thread::sleep(boost::posix_time::microseconds(100000));
     }
+  }
+
+  Velodyne sample(int density) {
+    srand(time(NULL));
+    Velodyne sampled;
+    for(::pcl::PointCloud<Point>::iterator pt = point_cloud.begin(); pt != point_cloud.end(); pt++) {
+      if(rand()%density == 0) {
+        sampled.push_back(*pt);
+      }
+    }
+    return sampled;
   }
 
   ::pcl::PointCloud<pcl::PointXYZRGB> colour(cv::Mat frame_rgb, cv::Mat P);

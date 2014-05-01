@@ -16,3 +16,7 @@ add_executable(calibration src/calibration.cpp src/Image.cpp src/Velodyne.cpp sr
 target_link_libraries(calibration ${PCL_LIBRARIES}) 
 target_link_libraries(calibration ${OpenCV_LIBS})
 
+add_executable(evolution-calibration src/evolution-calibration.cpp src/Image.cpp src/Velodyne.cpp src/Similarity.cpp ) 
+target_link_libraries(evolution-calibration ${PCL_LIBRARIES}) 
+target_link_libraries(evolution-calibration ${OpenCV_LIBS})
+
