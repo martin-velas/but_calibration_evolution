@@ -1,0 +1,305 @@
+\documentclass[12pt, a4paper]{article}
+
+\usepackage[left=3cm, top=3cm, text={15cm,23.5cm}]{geometry}
+\usepackage[T1]{fontenc} 
+\usepackage[bf]{caption}
+\usepackage{hyperref}
+\usepackage[all]{hypcap}
+\usepackage[utf8]{inputenc}
+\usepackage{graphicx}
+\usepackage[slovak, english]{babel}
+\selectlanguage{slovak}
+\usepackage{subfig}
+\usepackage{color}
+\usepackage{url}
+\inputencoding{utf8}
+\usepackage{hyperref}
+\usepackage[all]{hypcap}
+\hypersetup{colorlinks=false, linkbordercolor=1 1 1, citebordercolor=1 1 1}
+\usepackage{amsmath}
+
+\usepackage[ruled,vlined,czech,linesnumbered]{algorithm2e}
+\providecommand{\dontprintsemicolon}{\DontPrintSemicolon}
+
+\providecommand{\uv}[1]{\quotedblbase #1\textquotedblleft}
+
+\title{Automatická kalibrácia RGB kamery a LiDARu\\Velodyne pomocou evolučnej stratégie}
+\author{Martin Veľas\\ivelas@fit.vutbr.cz}
+\date{\today}
+
+
+%--------------------------------------------------------------------------------
+
+
+\begin{document}
+\selectlanguage{slovak}
+\maketitle
+%\linenumbers
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Úvod}
+
+Fúzia výstupov viacerých senzorov ponúka možnosť získať bohatší informačný obsah, ktorý samostatným senzorickým dátam chýba. Môže ísť napríklad o spojenie snímkov viacerých diagnostických prístrojov v medicíne\cite{jan} alebo spojenie $3$D mračna bodov \emph{LiDARu} so snímkom \emph{kamery}, o ktorom pojednáva táto práca.
+
+\begin{figure}[h!]
+	\center
+	\subfloat[Obrázok kamery]{\includegraphics[height=0.23\textwidth]{fig/camera_image.png}}
+	\quad
+	\subfloat[Mračno LiDARu Velodyne]{\includegraphics[height=0.23\textwidth]{fig/gray_cloud.png}}
+	\quad
+	\subfloat[Ofarbené mračno]{\includegraphics[height=0.25\textwidth]{fig/colored_cloud.png}}
+\caption{Snímok RGB kamery, mračno bodov ako výstup LiDARu Velodyne a ofarbené mračno bodov na získané fúziou uvedených senzorických dát na základe kalibrácie LiDARu s kamerou.\cite{taylor}\label{fig:color-cloud}}
+\end{figure}
+
+Lidar (laserový radar) poskytuje relatívne presnú informáciu o polohe objektov v priestore vo forme mračna bodov. Oproti tomu kamera zachytáva informáciu o farebných vlastnostiach povrchu objektov. Fúziou uvedených senzorov môžeme získať napríklad zafarbené mračno bodov pre bohatšie zobrazenie scény -- viď. obr. \ref{fig:color-cloud}.
+
+Ďalším využitím takto spojených senzorov je možnosť priradenia obrazových lokálnych príznakov k jednotlivým bodom mračna. Tieto príznaky sú ďalej použité pre potreby lokalizácie robota v priestore či detekcii zmien v scéne.
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Popis senzorov}
+V tejto kapitole budú popísané senzory použité pre fúziu -- teda kamera a lidar. Keďže pri spomínanej fúzii ide o dodanie farebnej informácie do mračna bodov, je využitá klasická RGB kamera senzoru Kinect, pričom hĺbková mapa, ktorá je taktiež jeho výstupom nie je využitá. Netradičnejším a teda aj zaujímavejším senzorom pre popis je laserový radar Velodyne. 
+
+Oba uvedené senzory sú inštalované na našej robotickej platforme (obr. \ref{fig:velodyne}), ktorá využíva robotický operačný systém \emph{ROS} pre unifikovanú prácu so senzorickými dátami pomocou systému \emph{topic-ov}, riešenie závislostí, konfiguráciu a komunikáciu aplikácií.
+
+\subsection{Velodyne lidar}
+
+Velodyne je lidar s vysokým rozlíšením, ktorý je vyrábaný firmou s rovnomenným názvom\cite{velodyne}. Samotný senzor spoločne s príkladom jeho výstupu je znázornený na obrázku \ref{fig:velodyne}. Senzor sa otáča rýchlosťou $10$Hz za sekundu a sníma scénu v rozsahu $360^{\circ}$ okolo senzoru. Prichádza v dvoch základných prevedeniach -- s $32$ a $64$ laserovými lúčmi, z čoho vychádza počet zosnímaných prstencov a teda aj miera podrobnosti získaného mračna bodov.
+
+\begin{figure}[h]
+\center
+	\subfloat[Velodyne]{\includegraphics[height=0.32\textwidth]{fig/velodyne_32.png}}
+	\quad
+	\subfloat[Príklad výstupu]{\includegraphics[height=0.32\textwidth]{fig/velodyne_scan.png}}
+	\quad
+	\subfloat[Robot vybavený senzormi]{\includegraphics[height=0.32\textwidth]{fig/robot.png}}
+\caption{Senzor Velodyne, príklad mračna bodov, ktoré sú jeho výstupom a inštalácia senzorov na našej robotickej platforme.\cite{velodyne}\label{fig:velodyne}}
+\end{figure}
+
+Jednoduchšie prevedenie s $32$ lúčmi má vertikálny zorný uhol v rozsahu od $-30^{\circ}$ do $+10^{\circ}$ a jeden snímok scény obsahuje približne $70\,000$ bodov. Maximálny dosah senzoru je okolo $70m$ a bežná presnosť okolo $2$cm.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Registrácia mračna bodov a RGB obrazu}
+Prvým krokom k fúzii viacerých sníkov je ich registrácia -- t.j. určenie správneho zarovnania jedného snímku k druhému\cite{jan}. Tá je realizovaná pomocou výpočtu geometrickej transformácie medzi senzormi. V prípade viacerých senzorov je možné hovoriť o ich \emph{kalibrácii}.
+
+Pre overenie správnosti geometrickej transformácie je nutné ďalej definovať vhodné kritérium podobnosti, založené na určitej spoločnej vlastnosti, ktorú zdieľa obraz a snímok LiDARu. Toto kritérium je možné ďalej využiť pri hľadaní samotnej geometrickej transformácie pomocou riešenia optimalizačnej úlohy.
+
+\subsection{Geometrické transformácie}
+Bez toho, aby boli zavedené dodatočné priestorové obmedzenia, je potrebné pri kalibrácii počítať so všetkými šiestimi stupňami voľnosti \emph{(6DoF, Degrees of Freedom)}\cite{taylor}. Teda s posunom jedného senzoru voči druhému v smere osi $x, y$ a $z$ a taktiež s rotáciou okolo týchto osí \emph{(pitch, roll, yaw)}.
+
+Pri zavedení \emph{homogénnych súradníc} je každý $3$D bod $[x, y, z]$ reprezentovaný pomocou vektoru $[X, Y, Z, w]$ pričom platí, že
+\begin{eqnarray}
+	x &= \dfrac{X}{w} \\
+	y &= \dfrac{Y}{w} \\
+	z &= \dfrac{Z}{w}.
+\end{eqnarray}
+
+Posun (transláciu) a rotáciu určenú kalibračným procesom je potom možné reprezentovať pomocou \emph{kalibračnej matice} $C$, zloženej z koeficientov reprezentujúcich rotáciu $r_{i}$ a posun $t_j$. 
+
+\begin{equation}
+    C = \left[ 
+      \begin{array}{cccc} 
+	r_1 & r_2 & r_3 & t_1 \\
+	r_4 & r_5 & r_6 & t_2 \\ 
+	r_7 & r_8 & r_9 & t_3 \\
+	0 & 0 & 0 & 1
+      \end{array}  
+      \right] \label{eq:translation}
+\end{equation}
+
+Posun a rotácia ľubovoľného bodu zo súradníc LiDARu $X_{lid}$ do bodu v súradniciach kamery $X_{cam}$ je realizovateľné jednoduchým maticovým násobením:
+
+\begin{equation}
+	X_{cam} = C . X_{lid}^T
+\end{equation}
+
+Keďže ide o fúziu $2$D snímkov s $3$D mračnom bodov, kalibrovaný snímok LiDARu je naviac premietnutý na rovinu obrazu pomocou projekčnej matice $P$, ktorá je odvodená na základe parametrov kamery -- \emph{ohnisková vzdialenosť} $f$ a \emph{principal point} $[o_x, o_y]$. Tento priemet je potom ďalej možné porovnať so snímkom kamery a tým overiť správnosť kalibrácie.
+
+\begin{equation}
+P = \left[ 
+      \begin{array}{cccc} 
+	f & 0 & o_x & 0 \\
+	0 & f & o_y & 0 \\ 
+	0 & 0 & 0 & 1
+      \end{array}
+    \right]	\label{eq:projection}
+\end{equation}
+
+Priemet $3$D bodu v (homogénnych) súradniciach kamery $X_{cam}$ na $2$D bod v štandardných súradniciach $[x, y]$ je možné potom opäť relizovať maticovým násobením a normalizáciou:
+
+\begin{eqnarray}
+	[X,Y,Z,w] =& P . X_{cam}^T \\
+	x =& \dfrac{X}{w} \\
+	y =& \dfrac{Y}{w}
+\end{eqnarray}
+
+Opačný postup -- teda doplnenie hĺbkovej informácie do obrazu by bol možný napríklad pri použití stereo-obrazu. Nepresnosti odhadu hĺbkovej informácie a problémy pri zarovnávaní, ktorými sa vyznačujú mračná bodov Velodyne, tento postup však znemožňujú. 
+
+\subsection{Projekčná chyba}
+Pre hodnotenie kalibrácie boli v poslednej dobe navrhnuté viaceré techniky založené na detekcii hrán v obraze s využitím kroskorelácie \cite{levinson} alebo vzájomnej informácie \cite{taylor}. Vyhodnotenie publikované v \cite{velas} ukazuje, že uvedené kritériá vykazujú neobjektívne hodnotenie kalibrácie -- nepresná kalibrácie je ohodnotená vysokou hodnotou.
+
+Tento problém je odstránený pri použití kritéria \emph{projekčnej chyby}, ktoré sa ukazuje ako objektívne hodnotenie vypočítanej kalibrácie. Vychádza z predpokladu, že body jednotlivých objektov v mračne bodov by mali byť premietnuté pri použití korektnej kalibračnej a projekčnej matice na oblasti obrazu, ktoré týmto objektom prináležia.
+
+Výpočet tohto kritéria si vyžaduje zachytenie takej scény, pri ktorej bude možné spoľahlivo oddeliť -- \emph{segmentovať} -- oblasti jednotlivých objektov, prípadne oddelenie popredia od pozadia. Túto požiadavku spĺňa napríklad scéna zostavená pre potreby približnej hrubej kalibrácie, ktorá je vypočítaná na základe detekcie $3$D markeru (obr. \ref{fig:segmentation_scene}), ktorý je postavený pred iný kontrastný objekt (biela stena a pod.). Parametre tejto hrubej kalibrácie budú použité pre inicializáciu optimalizačnej úlohy, ktorá ju spresní.
+
+V snímkoch takto pripravenej scény je možné segmentovať popredie od pozadia v obraze kamery pomocou \emph{adaptívneho prahovania} (výstup na obr. \ref{fig:segmentation_image}). Popredie (obr. \ref{fig:segmentation_front}) je možné oddeliť od pozadia (obr. \ref{fig:segmentation_back}) taktiež v mračne bodov zachytenom LiDARom segmentáciou pomocou metódy \emph{k-means}. V tomto prípade budú body popredia a pozadia predstavovať dva zhluky, ktoré sa táto metóda snaží nájsť.
+
+\begin{figure}[h]
+\center
+	\subfloat[Pripravena scena]{\includegraphics[height=0.25\textwidth]{fig/camera_left.png}\label{fig:segmentation_scene}}
+	\quad
+	\subfloat[Segmentacia obrazu]{\includegraphics[height=0.25\textwidth]{fig/segment.png}\label{fig:segmentation_image}}
+	
+	\subfloat[Popredie mračna bodov]{\includegraphics[height=0.3\textwidth]{fig/segment_front.png}\label{fig:segmentation_front}}
+	\quad
+	\subfloat[Pozadie mračna bodov]{\includegraphics[height=0.3\textwidth]{fig/segment_back.png}\label{fig:segmentation_back}}
+	
+	\caption{Pripravená scéna pre výpočet projection error \protect\subref{fig:segmentation_scene}, segmenácia obrazu z kamery \protect\subref{fig:segmentation_image}, popredie \protect\subref{fig:segmentation_front} a pozadie \protect\subref{fig:segmentation_back} získamé segmentáciou mračna bodov.\label{fig:segmentation}}
+\end{figure}
+
+Výpočet projekčnej chyby je potom veľmi jednoduchý a priamočiary. Všetky body mračna sú premietnuté na rovinu obrazu pomocou vypočítanej kalibračnej a projekčnej matice, ako bolo uvedené v rovniciach \ref{eq:translation} a \ref{eq:projection}. Ak je bod popredia (mračno na obr. \ref{fig:segmentation_front}) premietnutý na segment popredia v obraze (čierny segment na obr. \ref{fig:segmentation_image}) alebo bod pozadia (obr. \ref{fig:segmentation_back}) na segment pozadia (biely segment na obr. \ref{fig:segmentation_image}), je táto projekcia úspešná. V opačnom prípade je bod prehlásený za nesprávne premietnutý. Projekčná chyba $E_P$ je potom určená ako
+\begin{equation}
+	E_P = \dfrac{P_{err}}{P_{all}},
+\end{equation}
+
+kde $P_{all}$ je celkový počet bodov v $3$D mračne a $P_{err}$ je počet neúspešne premietnutých bodov.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Optimalizácia kalibrácie pomocou evolučnej stratégie}
+
+Na základe uvedených prístupov pre hodnotenie kalibrácie nie je možné matematicky odvodiť postup pre priamy výpočet geometrickej transformácie, ktorá je potrebná pre registráciu snímkov z kamery a LiDARu \cite{jan}. Úlohu kalibrácie je ale možné považovať za optimalizačný problém, pri ktorom je optimalizačné kritérium dané práve jedným z uvedených kritérií podobnosti -- v našom prípade pôjde o minimalizáciu projekčnej chyby $E_P$, resp. o maximalizáciu hodnoty $(1-E_P)$, keďže $E_P \in (0,1)$.
+
+Na obrázku \ref{fig:nmi} je uvedený priebeh hodnotiacej funkcie kalibrácie založenej na detekcii hrán a výpočte vzájomnej informácie -- v tomto prípade je závislej na uhle rotácie medzi senzormi v smere dvoch osí. Je evidentné, že priebeh obsahuje veľa lokálnych optím. Táto vlastnosť hodnotiacej funkcie znemožňuje použitie typických prístupov k optimalizácii (znižovanie/zvyšovanie gradientu či Newtonovú optimalizáciu) \cite{jan}.
+
+\begin{figure}[h]
+\center
+	\includegraphics[width=0.6\textwidth]{fig/nmi_values.jpg}
+\caption{Rozloženie normalizovanej vzájomnej informácie pri meniacom natočení podľa $x$-ovej a $y$-ovej osi.\cite{taylor}\label{fig:nmi}}
+\end{figure}
+
+Ideálnym prístupom by bolo úplné (resp. husté) prehľadávanie priestoru optimalizovaných parametrov. To však z dôvodu vysokej dimenzionality priestoru parametrov ($6$DoF) a jeho rozsahu nie je z výkonnostného hľadiska prípustné. Vhodným kompromisom sú techniky, ktoré kombinujú spomínané typické riešenia optimalizačných úloh so stochastickým prehľadávaním, ako napríklad optimalizácia evolučnou stratégiou.
+
+Tento prístup je analogickým voči optimalizácii genetickým algoritmom, pri ktorom každý (binárny) vektor reprezentujúci riešenie považovaný za jedinca populácie \cite{kvasnicka}. Jedinci populácie vytvárajú nových potomkov pomocou operátorov kríženia a mutácie, ktoré realizujú samotné prehľadávanie priestoru parametrov a vnášajú do populácie diverzitu.
+
+Ďalším prvkom genetického algoritmu a taktiež evolučnej stratégie je preferovanie silnejších jedincov -- s vyššou hodnotou fitnes, či už v procese výberu jedincov pre kríženie a teda aj tvorbu novej populácie (pri genetickom algoritme) alebo pri výbere jedincov do novej generácie populácie. 
+
+Jednotlivé prvky evolučnej stratégie budú vysvetlené v nasledujúcich sekciách.
+
+\subsection{Kódovanie problému}
+
+Evolučná stratégia (napr. na rozdiel od genetických algoritmov) vyžaduje kódovanie problému vo forme vektoru reálnych čísel -- \emph{cieľových premenných}, ktorý vieme vyhodnotiť \emph{fitnes} funkciou v kontexte riešenej úlohy \cite{kvasnicka}.
+
+V prípade kalibrácie kamery a LiDARu je cieľovými premennými $6$ stupňov voľnosti -- posun a natočenie LiDARu voči kamere vo všetkých $3$ osiach $3$D priestoru. Pre hodnotenie tohto vektoru bude použitá hodnota $(1-E_P)$ odvodená z projekčnej chyby $E_P$
+\begin{equation}
+	E_P: \mathcal{R}^6 \rightarrow (0,1),
+\end{equation}
+ktorá charakterizuje fitnes daného vektoru kalibračných parametrov, ktorý predstavuje jedného jedinca populácie.
+
+\subsection{Stratégia (1+1)}
+
+\begin{algorithm}[h]
+	\dontprintsemicolon
+	\KwIn{Iniciálny vektor reálnych premenných $x$, interval $(a,b)$ vymedzujúci možné hodnoty optimalizovaných parametrov.}
+	\KwOut{Vektor $x^*$ s najlepšou nájdenou fitnes.}
+	\BlankLine
+	
+	$t$ := $0$\;
+	$\sigma$ := $\sigma_0$\;
+	$\mathbf{x^*}$ := $\mathbf{x}$\;	
+	
+	\While {$t < t_{max}$}
+	{
+		$i$ := $0$\;
+		$k$ := $0$\;
+		$t++$\;
+		\While {$i < i_{max}$}
+		{
+			$i++$\;
+			$\mathbf{x'}$ := $\mathbf{x} + \mathbf{N}(\mathbf{0}, \sigma)$\;
+			\If { f($\mathbf{x'}$) < f($\mathbf{x}$) }
+			{
+				$k++$\;
+				$\mathbf{x}$ := $\mathbf{x'}$\;
+				\If { f($\mathbf{x}$) < f($\mathbf{x^*}$) }
+				{
+					$\mathbf{x^*}$ := $\mathbf{x}$\;	
+				}
+			}
+			\If { $k/i_{max} < 0.2$ }
+			{
+				$\sigma$ := $c_d\sigma$\;
+			} \ElseIf { $k/i_{max} > 0.2$ }
+			{
+				$\sigma$ := $c_i\sigma$\;
+			}
+		}
+	}
+
+	\Return{$\mathbf{x^*}$}
+	\caption{\emph{Algoritmus evolučnej stratégie $(1+1)$} \cite{kvasnicka}\label{alg:evolution_single}}
+\end{algorithm} 
+
+\subsection{Mnohočlenná stratégia (m+l)}
+
+\begin{algorithm}[h]
+	\dontprintsemicolon
+	\KwIn{interval $(a,b)$ vymedzujúci možné hodnoty optimalizovaných parametrov.}
+	\KwOut{Vektor s najlepšou nájdenou fitnes.}
+	\BlankLine
+	
+	$t$ := $0$\;
+	$\sigma$ := $\sigma_{ini}$\;
+	$P_0$ := \{náhodne generovaná populácia chromozómov (alely z intervalu $(a,b)$)\}\;
+	
+	\While {$t < t_{max}$ \textbf{alebo} nájdený chromozóm s dostatočnou fitnes }
+	{
+		$t++$\;
+		$Q$ := \{nové chromozómy vytvorené krížením a mutáciou chromozómov $P_t$\}\;
+		ohodnoť každý chromozóm $\mathbf{x}$ z $O$ hodnotou fitnes $f(\mathbf{x})$\;
+		$P_t$ := \{najlepšie chromozómy z $Q \cup P_t$\}\;
+	}
+
+	\Return{$\underset{\mathbf{x}} {\mathrm{argmax}} \{f(\mathbf{x}) \vert \mathbf{x} \in P_t\}$}
+	\caption{\emph{Algoritmus evolučnej stratégie $(1+1)$} \cite{kvasnicka}\label{alg:evolution_single}}
+\end{algorithm} 
+
+\section{Implementácia}
+
+\section{Vyhodnotenie}
+\begin{figure}[h]
+\center
+	\includegraphics[width=0.8\textwidth]{fig/results.pdf}
+\caption{Dosiahnutá presnosť $(1-E_P)$ iniciálnej kalibrácie, pravideľného prehľadávania priestoru, primerná a maximálna presnosť kalibrácie pri použití $(1+1)$ a mnohočlennej stratégie.\label{fig:results-accuracy}}
+\end{figure}
+
+\begin{table}
+	\center
+	\begin{tabular}{|l|r|}
+		\hline
+		\textbf{Metóda} & \textbf{Čas [s]}\\
+		\hline\hline
+		Grid search & $55.0$ \\\hline
+		Stratégia $(1+1)$ -- priemer & $3.9$ \\\hline
+		Stratégia $(1+1)$ -- min     & $1.1$ \\\hline
+		Stratégia $(m+l)$ -- priemer & $6.3$ \\\hline
+		Stratégia $(m+l)$ -- min     & $3.6$ \\\hline
+	\end{tabular}
+	\caption{Porovnanie časovej náročnosti vyhľadania riešenia s porovnateľnou fitnes $(0.92)$.\label{tab:results-time}}
+\end{table}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Záver}
+V tejto práci boli predstavené techniky používané pre kalibráciu kamery a laserového radaru. V prvej časti bol predstavený senzor Velodyne, ktorý je možné použiť pre fúziu s obrazom kamery pre obohatenie mračna bodov (napr. ofarbenie).
+
+Uvedené kritéria podobnosti dokážu ohodnotiť kvalitu kalibrácie kamery a lidaru a sa stávajú hodnotiacimi funkciami pri riešení úlohy kalibrácie ako optimalizačnej úlohy. Vhodným adeptom pre riešenie je particle swarm optimalizácia.
+
+V tejto práci sa nevyskytujú porovnania uvedených techník, keďže neexistujú zdroje, ktoré by ich obsahovali. Toto porovnanie nebolo možné vytvoriť ani v rámci tejto práce, v dôsledku nedostupnosti dát lidaru.
+
+
+\bibliographystyle{czechiso}
+\begin{flushleft}
+  \bibliography{project}
+\end{flushleft}
+
+\end{document}
