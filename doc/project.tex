@@ -129,7 +129,7 @@ P = \left[
 Priemet $3$D bodu v (homogénnych) súradniciach kamery $X_{cam}$ na $2$D bod v štandardných súradniciach $[x, y]$ je možné potom opäť relizovať maticovým násobením a normalizáciou:
 
 \begin{eqnarray}
-	[X,Y,Z,w] =& P . X_{cam}^T \\
+	[X,Y,w] =& P . X_{cam}^T \\
 	x =& \dfrac{X}{w} \\
 	y =& \dfrac{Y}{w}
 \end{eqnarray}
@@ -198,9 +198,16 @@ ktorá charakterizuje fitnes daného vektoru kalibračných parametrov, ktorý p
 
 \subsection{Stratégia (1+1)}
 
+Pri tejto stratégii je populácia tvorená jediným jedincom, ktorý je v ďalšej generácii nahradený svojím potomkom získaným operátorom náhodnej \emph{mutácie} \cite{kvasnicka}. Ten ovplyvňuje aktuálne riešenie $\mathbf{x}$ malými zmenami s normálnym Gaussovým rozložením pravdepodobnosti so strednou hodnotou $\mu = 0$ a smerodajnou odchýlkou $\sigma$:
+\begin{equation}
+	\mathbf{x} := \mathbf{x} + N(0,\sigma)
+\end{equation}
+
+Priebeh jednočlennej evolučnej stratégie je popísaný algoritmom \ref{alg:evolution_single}. Vstupom tohto algoritmu je iniciálny vektor cieľových parametrov, interval vymedzujúci hodnoty, ktoré môžu cieľové parametre nadobúdať a smerodajnú odchýlku mutačného operátoru. Výstupom algoritmu je vektor cieľových parametrov s maximálnou hodnotou fitnes.
+
 \begin{algorithm}[h]
 	\dontprintsemicolon
-	\KwIn{Iniciálny vektor reálnych premenných $x$, interval $(a,b)$ vymedzujúci možné hodnoty optimalizovaných parametrov.}
+	\KwIn{Iniciálny vektor reálnych premenných $x$, interval $(a,b)$ vymedzujúci možné hodnoty optimalizovaných parametrov a smerodajná odchýlka $\sigma_0$.}
 	\KwOut{Vektor $x^*$ s najlepšou nájdenou fitnes.}
 	\BlankLine
 	
@@ -240,7 +247,25 @@ ktorá charakterizuje fitnes daného vektoru kalibračných parametrov, ktorý p
 	\caption{\emph{Algoritmus evolučnej stratégie $(1+1)$} \cite{kvasnicka}\label{alg:evolution_single}}
 \end{algorithm} 
 
+Iniciálny vektor je možné vygenerovať náhodne rešpektujúc interval $(a,b)$. V prípade optimalizácie kalibrácie budú použité hodnoty cieľových parametrov poskytnuté predošlým procesom hrubého odhadu, ktorý je bližšie popísaný v predošlej publikácii \cite{velas}.
+
+Počas priebehu výpočtu evolučnej stratégie je potrebné  zabezpečiť, aby mutované hodnoty cieľových parametrov hodnotou $n \sim N(0,\sigma)$ zostávali v intervale $(a,b)$ pomocou tzv. \emph{odrazu} popísaného vzťahom \ref{eq:pertrub1} a \ref{eq:pertrub2}, ktorý hodnotu parametru $x$ vráti do žiadaného intervalu.
+\begin{eqnarray}
+	x_n :=& x + n \label{eq:pertrub1}\\
+	x :=& \left\{ \begin{array}{lcl}
+	x_n      &    & x_n \in (a,b) \\
+	2a - x_n & ak & x_n < a \\
+	2b - x_n &    & x_n > b \\
+	\end{array}\right.\label{eq:pertrub2}
+\end{eqnarray}
+
+Hodnota smerodajnej odchýlky môže podliehať v priebehu výpočtu taktiež zmenám. V prípade častých úspešne nájdených lepších riešení je hodnota $\sigma$ zväčšovaná násobením vhodnou konštantou $c_i = 1.22$ aby sa miera mutačných zmien podporila. Pri opačnom trende je smerodajná odchýlka násobená jej inverznou hodnotou $c_d = 1/c_i$ pre spomalenie mutačných zmien, ktoré aktuálne neprinášajú časté zlepšenie riešenia.
+
 \subsection{Mnohočlenná stratégia (m+l)}
+
+Pri použití tejto stratégie výpočet založený na použití viacerých  -- $m$ -- jedincov populácie, ktorí pomocou operátorov kríženia a mutácie vytvárajú v každej generácii $l$ nových potomkov \cite{kvasnicka}. Z tejto množiny jedincov ($m$ rodičov a $l$ potomkov) je vybraných $m$ jedincov s najlepšou fitnes, ktorí budú tvoriť populáciu ďalšej generácie výpočtu. Pre úlohy, ktorým hrozí uviaznutie v lokálnom minime je vhodný pomer $m:l = 1:7$.
+
+Algoritmus \ref{alg:evolution_multiple} demonštruje postup výpočtu mnohočlennej evolučnej stratégie, ktorej výstupom je opäť jedinec s najlepšou nájdenou hodnotou fitnes.
 
 \begin{algorithm}[h]
 	\dontprintsemicolon
@@ -261,17 +286,68 @@ ktorá charakterizuje fitnes daného vektoru kalibračných parametrov, ktorý p
 	}
 
 	\Return{$\underset{\mathbf{x}} {\mathrm{argmax}} \{f(\mathbf{x}) \vert \mathbf{x} \in P_t\}$}
-	\caption{\emph{Algoritmus evolučnej stratégie $(1+1)$} \cite{kvasnicka}\label{alg:evolution_single}}
+	\caption{\emph{Algoritmus evolučnej stratégie $(1+1)$} \cite{kvasnicka}\label{alg:evolution_multiple}}
 \end{algorithm} 
 
-\section{Implementácia}
+\subsubsection{Operátor kríženia}
+Kríženie chromozómov populácie je ďalší spôsob (popri mutácii), ako je do populácie vnášaná rozmanitosť -- diverzita. Kríženie je použité už v oblasti genetických algoritmov, kde výmenou informácií dvoch jedincov vznikajú dvaja potomkovia. V prípade mnohočlenných evolučných stratégií je však výstupom kríženia jediný jedinec.
 
-\section{Vyhodnotenie}
+Prvým problémom, ktorý je pri zavedení kríženia potrebné vyriešiť je výber rodičovských jedincov, ktorý sa pre kríženie použijú. Evolučné stratégie vychádzaj z predpokladu, že konvergencia riešenia je zabezpečená selekciou najsilnejších jedincov do novej generácie a preto výber rodičov pre tvorbu novej populácie nereflektuje if fitnes (ako je to u genetických algoritmov), ale rodičia sú vyberaní s rovnomerných rozložením pravdepodobnosti.
+
+Základné typy kríženia pri použití reálnych parametrov sú \emph{diskrétne kríženie}, ktoré vnáša najväčšiu mieru rozmanitosti do populácie. Ďalej kríženie \emph{priemerom} a \emph{lineárnou kombináciou}.
+
+Pri diskrétnom krížení je každý cieľový parameter potomka priamo prebraný od jedného z dvoch rodičov, pričom výber konkrétneho rodiča pre konkrétny $i$-ty parameter podlieha opäť rovnomernému rozloženiu pravdepodobnosti:
+\begin{equation}
+	x_i = x_i^{rodic1} \;\;\; \mbox{alebo} \;\;\; x_i^{rodic2}.
+\end{equation}
+
+Kríženie priemerom realizuje bežný aritmetický priemer rodičovských vektorov:
+\begin{equation}
+	\mathbf{x} = \dfrac{\mathbf{x}^{rodic1} + \mathbf{x}^{rodic2}}{2}
+\end{equation}
+
+a posledný typ realizuje lineárnu kombináciu rodičov s koeficientom $\alpha$:
+\begin{equation}
+	\mathbf{x} = \mathbf{x}^{rodic1}\alpha + \mathbf{x}^{rodic2}(1-\alpha)
+\end{equation}
+
+\subsubsection{Evolúcia riadiacich parametrov}
+Pri mnohočlennej evolučnej stratégii je na všetkých jedincov populácie (rodičov a potomkov) ďalej aplikovaný operátor mutácie rovnako, ako pri stratégii $(1+1)$. Riadiaci parameter $\sigma$ však nie je modifikovaný pravidlom $1/5$ ale každý jedinec obsahuje sadu riadiacich parametrov ${\sigma_i | i = 1 ... N}$ -- jeden pre každý z $N$ cieľových parametrov.
+
+Tieto riadiace parametre -- smerodajné odchýlky podliehajú opäť evolučnej stratégií a sú mutované podľa vzťahu:
+\begin{equation}
+	\sigma_i := \sigma_i\exp^{N(0, \delta\sigma)}
+\end{equation}
+
+pričom hodnota $\delta\sigma$ je vstupným parametrom metódy a zostáva konštantná počas celého priebehu výpočtu evolučnej stratégie.
+
+\section{Implementácia a vyhodnotenie}
+
+Implementácia evolučnej stratégie $(1+1)$ a mnohočlennej stratégie vychádza z popisu metód uvedených v predchádzajúcej kapitole. Aplikácia je vytvorená s využitím knižnice počítačového videnia \emph{OpenCV}, knižnice pre prácu s mračnami bodov \emph{PCL} a v natívnom jazyku uvedených knižníc, ktorým je \emph{C++}. Podporné moduly \texttt{Velodyne} a \texttt{Image} vznikli pri príprave predchádzajúcej publikácie \cite{velas}.
+
+Aplikácia je realizovaná s jednoduchým CLI rozhraním, pričom vstupnými argumentami sú obraz a projekčná matica kamery, mračno bodov LiDARu Velodyne a iniciálne hodnoty približnej kalibrácie. Zdrojové kódy sú verejne dostupné v osobnom repozitári \emph{GitHub} na adrese: 
+
+\texttt{https://github.com/martin-velas/but\_calibration\_evolution}.
+
+\medskip
+Evolučná stratégia $(1+1)$ je implementovaná funkciou \texttt{evolution1x1} s využitím pomocnej triedy \texttt{CalibrationSubspace}. Stratégia vychádza z algoritmu \ref{alg:evolution_single}, pričom úprava smerodajnej odchýlky pravidlom $1/5$ bola z implementácie vypustená, pretože prinášala nevhodné uviaznutia riešenia v lokálnych minimách.
+
+Mnohočlenná stratégia $(m+l)$ vychádza taktiež plne z popisu uvedenom v predchádzajúcej kapitole (algoritmus \ref{alg:evolution_multiple}). Pre vytváranie nových jedincov bol použitý operátor diskrétneho kríženia a veľkosť populácie bola zvolená na základe experimentov ako $(m,l) = (100,700)$.
+
+Prepínanie medzi použitím jednočlennej a mnohočlennej evolučnej stratégie je riešené pomocou definície makra \texttt{MULTIMEMBER\_EVOLUTION} na úrovni preprocesoru prekladača jazyka C++.
+
+\subsection{Dosiahnuté výsledky}
+Okrem experimentov pre nájdenie vhodných parametrov evolučnej stratégie boli vykonané experimenty s optimálnymi parametrami -- vždy $10$ behov -- uvedené sú priemerné a najlepšie dosiahnuté výsledky na dátovej sade získanej z robotickej platformy. Tieto experimenty sa zameriavajú na porovnanie kalibrácie pomocou evolučnej stratégie s pravidelným vzorkovaním podpriestoru kalibračných parametrov, ktoré bolo použité v predchádzajúcej práci. 
+
+Pre všetky typy porovnávaných kalibrácií (jednočlenná, mnohočlenná stratégia a pravidelné prehľadávanie priestoru) bol priestor kalibračných parametrov obmedzený na posun LiDARu voči kamere vo všetkých $3$ osiach na $2cm$ a zmena orientácie na $6^\circ$. Pri pravidelnom prehľadávaní bol podpriestor všetkých šiestich stupňov voľnosti vzorkovaný pre každú dimenziu $5x$, čo dohromady predstavuje prehľadanie $5^6 = 15\,625$ vektorov kalibračných parametrov, ktoré trvá na testovanej platforme (bežný NB) približne $55$s.
+
 \begin{figure}[h]
 \center
 	\includegraphics[width=0.8\textwidth]{fig/results.pdf}
-\caption{Dosiahnutá presnosť $(1-E_P)$ iniciálnej kalibrácie, pravideľného prehľadávania priestoru, primerná a maximálna presnosť kalibrácie pri použití $(1+1)$ a mnohočlennej stratégie.\label{fig:results-accuracy}}
+\caption{Dosiahnutá fitnes $(1-E_P)$ iniciálnej kalibrácie, pravideľného prehľadávania priestoru, primerná a maximálna presnosť kalibrácie pri použití $(1+1)$ a mnohočlennej $(m+l)$ stratégie.\label{fig:results-accuracy}}
 \end{figure}
+
+V grafe na obr. \ref{fig:results-accuracy} sú uvedené hodnoty fitnes ($1-E_P$) pre jednotlivé testované prístupy ku kalibrácii, pričom každý z uvedených prístupov mal výpočetný čas obmedzený na $1$min. Z grafu vyplýva, že evolučná stratégia dosahuje mierne lepšie výsledky (obzvlášť mnohočlenná), ako jednoduché pravidelné vzorkovanie priestoru.
 
 \begin{table}
 	\center
@@ -288,14 +364,13 @@ ktorá charakterizuje fitnes daného vektoru kalibračných parametrov, ktorý p
 	\caption{Porovnanie časovej náročnosti vyhľadania riešenia s porovnateľnou fitnes $(0.92)$.\label{tab:results-time}}
 \end{table}
 
+Výrazná zmena vo výkonnosti nastáva v prípade, že limitujúcim prvkom nie je výpočetný čas, ale snaha o dosiahnutie konkrétnej (resp. lepšej) hodnoty fitnes funkcie. V tomto prípade bola zvolená hodnota fitnes na hranicu $0.92$ (fitnes dosiahnuteľná pravidelným vzorkovaním). Z tabuľky \ref{tab:results-time} je evidentné, že evolučná stratégia dosahuje rapídne zrýchlenie -- cca. $8.7$x pre mnohočlennú a $15.3$x pre jednočlennú stratégiu.   
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \section{Záver}
-V tejto práci boli predstavené techniky používané pre kalibráciu kamery a laserového radaru. V prvej časti bol predstavený senzor Velodyne, ktorý je možné použiť pre fúziu s obrazom kamery pre obohatenie mračna bodov (napr. ofarbenie).
+V tejto práci boli predstavené techniky používané pre kalibráciu kamery a laserového radaru s využitím evolučných stratégií. V prvej časti bolo predstavené využitie takejto kalibrácie, prehľad senzorov a teoretický základ danej problematiky. Následne boli diskutované prístupy ku kalibrácii s využitím jednočlenných a mnohočlenných evolučných stratégií.
 
-Uvedené kritéria podobnosti dokážu ohodnotiť kvalitu kalibrácie kamery a lidaru a sa stávajú hodnotiacimi funkciami pri riešení úlohy kalibrácie ako optimalizačnej úlohy. Vhodným adeptom pre riešenie je particle swarm optimalizácia.
-
-V tejto práci sa nevyskytujú porovnania uvedených techník, keďže neexistujú zdroje, ktoré by ich obsahovali. Toto porovnanie nebolo možné vytvoriť ani v rámci tejto práce, v dôsledku nedostupnosti dát lidaru.
-
+Podľa uvedených prístupov bola implementovaná aplikácia pre realizáciu kalibrácie jednočlennou a mnohočlennou evolučnou stratégiou. Na základe uvedených vykonaných experimentov bolo ukázané, že evolučné stratégie sú schopné poskytnúť lepšie výsledky kalibrácie a dokážu proces kalibrácie urýchliť až $15.3$x v porovnaní s naivným prístupom pravidelného vzorkovania podpriestoru kalibračných parametrov.
 
 \bibliographystyle{czechiso}
 \begin{flushleft}
